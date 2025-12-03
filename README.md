@@ -6,7 +6,7 @@ A fun Rock Paper Scissors game for the terminal!
 
 ### Windows/Mac/Linux
 ```bash
-pip install rps-game-cli
+pip install git+https://github.com/SohanurRahmanSohan43/rps_game.git
 rps
 ```
 
