@@ -21,12 +21,6 @@ cd rps-game
 pip install .
 rps
 ```
-Or run without installing
-```
-git clone https://github.com/SohanurRahmanSohan43/rps_game.git
-cd rps-game/rps_game
-python game.py
-```
 
 ### From Source
 ```bash
