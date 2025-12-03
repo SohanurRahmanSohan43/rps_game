@@ -16,7 +16,7 @@ rps
 ```bash
 pkg update && pkg upgrade
 pkg install python git
-git clone https://github.com/YOUR_USERNAME/rps-game.git
+git clone https://github.com/SohanurRahmanSohan43/rps_game.git
 cd rps-game
 pip install .
 rps
