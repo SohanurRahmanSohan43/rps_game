@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="rps-game-cli",
-    version="1.0.0",
+    version="1.0.1",
     author="Sohanur Rahman Sohan",
     description="A fun Rock Paper Scissors game for the terminal",
     long_description=long_description,
