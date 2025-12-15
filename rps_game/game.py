@@ -25,6 +25,150 @@ import sys
 from rich.console import Console
 from rich.table import Table
 
+# ASCII art for moves (right-facing for player)
+# More aggressive tilt
+FIST_RIGHT = [
+    "      ____     ",
+    "   ,-(____)-   ",
+    " -'  (_____)   ",
+    "    (_____)    ",
+    "     (____)    ",
+    "      (__)     "
+]
+
+FIST_LEFT = [
+    "     ____      ",
+    "   -(____)-,   ",
+    "   (_____)  '- ",
+    "    (_____)    ",
+    "     (____)    ",
+    "      (__)     "
+]
+
+ROCK_RIGHT = [
+    "    _______    ",
+    "---'   ____)   ",
+    "      (_____)  ",
+    "      (_____)  ",
+    "      (____)   ",
+    "---.__(___)    "
+]
+
+PAPER_RIGHT = [
+    "     _______     ",
+    "---'    ____)____ ",
+    "           ______)",
+    "          _______)",
+    "         _______) ",
+    "---.__________)   "
+]
+
+SCISSORS_RIGHT = [
+    "    _______      ",
+    "---'   ____)____ ",
+    "          ______)",
+    "       __________)",
+    "      (____)     ",
+    "---.__(___)      "
+]
+
+# ASCII art for moves (left-facing for computer)
+ROCK_LEFT = [
+    "    _______    ",
+    "   (____   '---",
+    "  (_____)      ",
+    "  (_____)      ",
+    "   (____)      ",
+    "    (___)__.---"
+]
+
+PAPER_LEFT = [
+    "     _______     ",
+    " ____(____    '---",
+    "(______           ",
+    "(_______          ",
+    " (_______         ",
+    "   (__________.---"
+]
+
+SCISSORS_LEFT = [
+    "      _______    ",
+    " ____(____   '---",
+    "(______          ",
+    "(__________       ",
+    "     (____)      ",
+    "      (___)__.---"
+]
+
+ASCII_MOVES_RIGHT = {
+    1 : ROCK_RIGHT,
+    0 : PAPER_RIGHT,
+    -1 : SCISSORS_RIGHT
+}
+
+ASCII_MOVES_LEFT = {
+    1 : ROCK_LEFT,
+    0 : PAPER_LEFT,
+    -1 : SCISSORS_LEFT
+}
+
+
+def animate_countdown():
+    
+    for count in ['3', '2', '1', 'SHOOT!']:
+        command = 'cls' if os.name == 'nt' else 'clear'
+        os.system(command)
+        print("\n"*6)
+        print(count.center(80))
+        sleep(0.5)
+
+def animate_moves(p, c):
+    command = 'cls' if os.name == 'nt' else 'clear'
+    
+    # Calculate final positions
+    screen_width = 80
+    hand_width = 20
+    min_space = 15
+    total_hands_width = hand_width * 2 + min_space
+    center_padding = (screen_width - total_hands_width) // 2
+    
+    # Fixed header spacing
+    header_spacing = min_space + (12 * 2)
+    
+    # Hands approach from edges to center
+    for distance in range(12, -1, -1):
+        os.system(command)
+        print("\n"*5)
+        
+        left_padding = center_padding + (distance * 2)
+        right_offset = distance * 2
+        
+        print(" "*left_padding + "YOU" + " "*header_spacing + "COMPUTER")
+        print("=" * 80)
+
+        for p_line, c_line in zip(FIST_RIGHT, FIST_LEFT):
+            print(" "*left_padding + p_line + " "*min_space + " "*right_offset + c_line)
+        
+        print("="*80)
+        sleep(distance*0.01)
+
+    sleep(0.2)
+    os.system(command)
+    print("\n"*5)
+
+    player_lines = ASCII_MOVES_RIGHT[p]
+    computer_lines = ASCII_MOVES_LEFT[c]
+    
+    print(" " * center_padding + "YOU" + " "*header_spacing + "COMPUTER")
+    print("="*80)
+    
+    for p_line, c_line in zip(player_lines, computer_lines):
+        print(" " *center_padding + p_line + " " *min_space + c_line)
+    print("="*80)
+    sleep(1)
+
+
+
 def get_single_char():
 
     """Read a single character from stdin without requiring Enter"""
@@ -78,17 +222,21 @@ def input_move():
 
 
 def win(p, c, w, l, d):
+
+    animate_countdown()
+    animate_moves(p,c)
+
     value = p-c
     if value in [-1, 2]:
-        print("You have won Hurrah!!\n\n")
+        print("You have won Hurrah!!\n\n".center(80))
         w +=1
     elif value in [1, -2]:
-        print("You have lost\n\n")
+        print("You have lost\n\n".center(80))
         l+=1
     else:
-        print("It's a draw!")
+        print("It's a draw!".center(80))
         d+=1
-    sleep(0.5)
+    sleep(1.0)
     return(w,l,d)
 
 #To fix the bug while sleep
