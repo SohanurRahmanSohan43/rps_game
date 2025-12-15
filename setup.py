@@ -17,7 +17,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "rps=rps_game:cli",
+            "rps=rps_game.game:cli",
         ],
     },
     python_requires=">=3.6",
