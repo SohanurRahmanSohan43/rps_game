@@ -24,6 +24,9 @@ import os
 import sys
 from rich.console import Console
 from rich.table import Table
+import sys
+import subprocess
+
 
 # ASCII art for moves (right-facing for player)
 # More aggressive tilt
@@ -112,6 +115,19 @@ ASCII_MOVES_LEFT = {
     -1 : SCISSORS_LEFT
 }
 
+def update_game():
+    print("Checking for updates from GitHub...")
+    repo_url = "git+https://github.com/SohanurRahmanSohan43/rps_game.git"
+    
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", repo_url])
+        print("\n✅ Update complete! Please restart the game to see changes.")
+        sys.exit() 
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Update failed: {e}")
+        print("Try running the command prompt as Administrator/sudo and try again.")
+    except Exception as e:
+        print(f"\n❌ An unexpected error occurred: {e}")
 
 def animate_countdown():
     
@@ -318,6 +334,9 @@ def main():
         
 def cli():
     main()
-
+    
 if __name__ == "__main__":
-    cli()
+    if len(sys.argv) > 1 and sys.argv[1] in ['--update', '-u']:
+        update_game()
+    else:
+        cli()
