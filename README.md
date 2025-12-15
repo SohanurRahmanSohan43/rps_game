@@ -38,3 +38,8 @@ Just type `rps` in your terminal and enjoy!
 - `p` - Paper
 - `s` - Scissors
 - `Ctrl+C` - Exit and see scoreboard
+
+## Uninstallation
+```bash
+pip uninstall rps-game-cli
+```
