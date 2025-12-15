@@ -25,7 +25,7 @@ rps
 ### From Source
 ```bash
 git clone https://github.com/SohanurRahmanSohan43/rps_game.git
-cd rps-game
+cd rps_game
 pip install .
 rps
 ```
