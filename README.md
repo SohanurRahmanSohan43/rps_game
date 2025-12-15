@@ -39,6 +39,11 @@ Just type `rps` in your terminal and enjoy!
 - `s` - Scissors
 - `Ctrl+C` - Exit and see scoreboard
 
+## Updating
+```bash
+rps -u
+```
+
 ## Uninstallation
 ```bash
 pip uninstall rps-game-cli
