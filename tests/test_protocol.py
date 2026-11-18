@@ -2,13 +2,15 @@ import json
 
 import pytest
 
+from rps_game.net.config import PROTOCOL_VERSION
+
 from rps_game.net import protocol as p
 from rps_game.net.config import MAX_MESSAGE_BYTES
 from rps_game.net.errors import ProtocolError
 
 ID = "a" * 32
 GOOD = [
-    p.Hello(1, "Sohan", ID, "3.4.0"), p.Hello(1, "সোহান", ID, "3.4.0"),
+    p.Hello(PROTOCOL_VERSION, "Sohan", ID, "3.4.0"), p.Hello(PROTOCOL_VERSION, "সোহান", ID, "3.4.0"),
     p.RejectName("taken"), p.RejectName("invalid"),
     p.Settings(5, None), p.Settings(None, 3),
     p.Accept(), p.Decline(), p.Start(),
@@ -26,7 +28,7 @@ def raw(**fields):
     return json.dumps(fields).encode()
 
 
-HELLO = dict(t="hello", v=1, name="Bob", id=ID, app="3.4.0")
+HELLO = dict(t="hello", v=PROTOCOL_VERSION, name="Bob", id=ID, app="3.4.0")
 
 
 @pytest.mark.parametrize("data", [
@@ -86,7 +88,7 @@ def test_the_peer_cannot_make_us_display_arbitrary_text():
 
 def test_encoding_refuses_oversized_messages():
     with pytest.raises(ValueError):
-        p.encode(p.Hello(1, "x" * (MAX_MESSAGE_BYTES + 1), ID, "1.0"))
+        p.encode(p.Hello(PROTOCOL_VERSION, "x" * (MAX_MESSAGE_BYTES + 1), ID, "1.0"))
 
 
 def test_encoding_a_non_message_is_a_programming_error():
@@ -148,3 +150,27 @@ def test_game_messages_round_trip(message):
 def test_bad_game_messages_are_rejected(data):
     with pytest.raises(ProtocolError):
         p.decode(data)
+
+
+# ---------------------------------------------------------------- chat
+
+def test_chat_round_trips_including_unicode():
+    for text in ("hello", "সোহান ভালো খেলা", "gg 😀", "1/2 pizza"):
+        assert p.decode(p.encode(p.Chat(text))) == p.Chat(text)
+
+
+@pytest.mark.parametrize("data", [
+    raw(t="chat"), raw(t="chat", text=5), raw(t="chat", text=None), raw(t="chat", text=["hi"]),
+    raw(t="chat", text=""), raw(t="chat", text="   "),
+    raw(t="chat", text=" untidy"), raw(t="chat", text="two  spaces"),     # must already be tidy
+    raw(t="chat", text="line\nbreak"), raw(t="chat", text="esc\x1b[2J"),
+    raw(t="chat", text="\u202eevil"), raw(t="chat", text="x" * 201),
+    raw(t="chat", text="hi", extra="field"),
+])
+def test_bad_chat_messages_are_protocol_errors(data):
+    with pytest.raises(ProtocolError):
+        p.decode(data)
+
+
+def test_the_protocol_version_is_2():
+    assert PROTOCOL_VERSION == 2

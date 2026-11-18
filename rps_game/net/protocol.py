@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 from typing import Optional, Union
 
+from ..chat import check_chat
 from ..identity import valid_install_id
 from ..names import check_name
 from .config import MAX_MESSAGE_BYTES
@@ -91,6 +92,11 @@ class Rematch:
 
 
 @dataclass(frozen=True)
+class Chat:
+    text: str              # already tidy and validated; see chat.py
+
+
+@dataclass(frozen=True)
 class Ping:
     n: int
 
@@ -101,7 +107,7 @@ class Pong:
 
 
 Message = Union[Hello, RejectName, Settings, Accept, Decline, Start, Bye, Ping, Pong,
-                Commit, Reveal, Rematch]
+                Commit, Reveal, Rematch, Chat]
 
 
 # ---------------------------------------------------------------- encoding
@@ -130,6 +136,8 @@ def encode(message: Message) -> bytes:
                 "nonce": message.nonce}
     elif isinstance(message, Rematch):
         body = {"t": "rematch"}
+    elif isinstance(message, Chat):
+        body = {"t": "chat", "text": message.text}
     elif isinstance(message, Ping):
         body = {"t": "ping", "n": message.n}
     elif isinstance(message, Pong):
@@ -213,6 +221,15 @@ def decode(data: object) -> Message:
     if kind in ("accept", "decline", "start", "rematch"):
         _fields(obj)
         return {"accept": Accept, "decline": Decline, "start": Start, "rematch": Rematch}[kind]()
+    if kind == "chat":
+        _fields(obj, "text")
+        text = obj["text"]
+        if not isinstance(text, str):
+            raise ProtocolError("bad chat")
+        checked = check_chat(text)
+        if not checked.ok or checked.text != text:     # must already be in tidy form
+            raise ProtocolError("bad chat")
+        return Chat(text)
     if kind == "commit":
         _fields(obj, "round", "digest", "state")
         for field in ("digest", "state"):

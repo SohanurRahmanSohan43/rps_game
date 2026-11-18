@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from rps_game.net.config import PROTOCOL_VERSION
+
 from rps_game.net import protocol as proto
 from rps_game.net.errors import (Cancelled, Declined, Incompatible, PeerLeft, ProtocolError,
                                  RoomBurned, Timeout, TransportClosed, WrongPasskey)
@@ -233,7 +235,7 @@ def test_cancelling_while_waiting_stops_the_host():
 
 def test_versions_that_differ_refuse_politely_on_both_sides():
     box = MemoryMailbox()
-    box.tamper = lambda role, data: data.replace(b'"v":1', b'"v":2')
+    box.tamper = lambda role, data: data.replace(b'"v":2', b'"v":3')
     h, j = run_pair(box)
     assert isinstance(h, Incompatible) and isinstance(j, Incompatible)
     assert "rps --update" in str(h)
@@ -277,7 +279,7 @@ def test_the_host_rejects_unexpected_replies_to_its_settings():
     ht, hres = in_thread(HostSession(**host_kwargs(box)))
     time.sleep(0.1)
     peer = _raw_peer(box)
-    peer.send(proto.encode(proto.Hello(1, "Bob", JOIN_ID, "3.4.0")))
+    peer.send(proto.encode(proto.Hello(PROTOCOL_VERSION, "Bob", JOIN_ID, "3.4.0")))
     time.sleep(0.2)
     peer.send(proto.encode(proto.Ping(1)))                  # neither accept nor decline
     ht.join(5)
@@ -289,7 +291,7 @@ def test_a_malicious_host_cannot_claim_the_joiners_name():
     jt, jres = in_thread(JoinSession(**join_kwargs(box)))
     host = _raw_peer(box)
     time.sleep(0.2)
-    host.send(proto.encode(proto.Hello(1, "bob", HOST_ID, "3.4.0")))   # same name, different case
+    host.send(proto.encode(proto.Hello(PROTOCOL_VERSION, "bob", HOST_ID, "3.4.0")))   # same name, different case
     jt.join(5)
     assert isinstance(jres["result"], ProtocolError)
 
@@ -299,7 +301,7 @@ def test_a_host_that_skips_the_settings_is_refused():
     jt, jres = in_thread(JoinSession(**join_kwargs(box)))
     host = _raw_peer(box)
     time.sleep(0.2)
-    host.send(proto.encode(proto.Hello(1, "Sohan", HOST_ID, "3.4.0")))
+    host.send(proto.encode(proto.Hello(PROTOCOL_VERSION, "Sohan", HOST_ID, "3.4.0")))
     host.send(proto.encode(proto.Start()))
     jt.join(5)
     assert isinstance(jres["result"], ProtocolError)
@@ -310,7 +312,7 @@ def test_a_host_that_never_starts_leaves_the_joiner_timing_out():
     jt, jres = in_thread(JoinSession(**join_kwargs(box, step_timeout=0.5)))
     host = _raw_peer(box)
     time.sleep(0.2)
-    host.send(proto.encode(proto.Hello(1, "Sohan", HOST_ID, "3.4.0")))
+    host.send(proto.encode(proto.Hello(PROTOCOL_VERSION, "Sohan", HOST_ID, "3.4.0")))
     host.send(proto.encode(proto.Settings(None, 3)))
     jt.join(5)
     assert isinstance(jres["result"], Timeout) and "start" in str(jres["result"])
@@ -320,7 +322,7 @@ def test_a_third_player_cannot_disturb_a_finished_handshake():
     box = MemoryMailbox()
     h, j = run_pair(box)
     intruder = box.transport(); intruder.open(f"{ROOM}-{PASS}")
-    intruder.send(proto.encode(proto.Hello(1, "Mallory", "c" * 32, "3.4.0")))
+    intruder.send(proto.encode(proto.Hello(PROTOCOL_VERSION, "Mallory", "c" * 32, "3.4.0")))
     h.channel.send(proto.Ping(7))
     assert j.channel.transport.recv(1) is not None          # the real pair still talks
 

@@ -20,7 +20,7 @@ Run `rps` to open the menu:
 ```
 Main menu
 > Start Game
-  Stats
+  Stats & settings
   Exit
         Start Game > Select a mode
         > Single Player        -> difficulty (Easy / Normal / Hard)
@@ -70,6 +70,14 @@ way to share a room code and passkey (a chat message is fine).
   scoreboard (your connection's round-trip time is shown in the title). When the game ends you can
   *Play again*, which needs both players to agree and reuses the connection, so there is no new
   passkey to enter, or return to the menu.
+- **Chat.** Press `/` to open chat while you choose, wait, or look at the results: type, press
+  Enter to send, and `/` on an empty line (or Esc) to go back. A `/` anywhere else in a message is
+  just a slash, so "1/2" and links work. The round screen shows the newest message and how many are
+  new, and `m` mutes your opponent's messages for the match. Game keys do nothing while you type,
+  so "rps" won't throw a move. In `--plain` mode, type `/message` at the move prompt to send,
+  `/` on its own to read recent messages, and `/mute` to hide them; new messages print before each
+  prompt. Messages are single-line, up to 200 characters, kept only in memory for the match, and
+  limited to a few per second. Turn chat off entirely under **Stats & settings**.
 - **Leaving is a forfeit.** Quitting (you are asked to confirm), closing the program, losing your
   connection for 30 seconds or taking more than two minutes to choose counts as a win for the other
   player.
@@ -81,6 +89,11 @@ way to share a room code and passkey (a chat message is fine).
   mailbox. Your passkey is never sent: it is only used for a password-authenticated key exchange,
   so the mailbox (and anyone watching the network) cannot read the game or guess the passkey
   offline.
+- Chat messages are validated like names (no control, escape or bidi-override characters, no
+  line breaks) and travel inside the same encrypted channel as moves. A flooding opponent is
+  dropped and then muted automatically.
+- Both games must run the same network protocol version. If they differ you are told to update
+  with `rps --update` rather than anything breaking oddly.
 - A wrong passkey fails on both sides. The host's room closes after three wrong attempts.
 - **Fair rounds.** Each round both players first send a hash of their move plus a random value
   and only then reveal them, and each checks the other's reveal against the hash. A modified game
@@ -102,9 +115,9 @@ rps --mailbox ws://YOUR-HOST:4000/v1            # both players, or set $RPS_MAIL
 
 ### Stats menu
 
-`Stats` in the main menu shows your lifetime results and holds two preferences:
+`Stats & settings` in the main menu shows your lifetime results and holds the preferences:
 **Show stats after each game** (off by default: the results screen then shows only the game
-you just played) and **Reset statistics**. Head-to-head results against other players will
+you just played), **Chat in online games** (on by default), and **Reset statistics**. Head-to-head results against other players will
 arrive with Dual Player.
 
 Game keys: `r` / `p` / `s` (or `1` / `2` / `3`), `q` to quit. In `--plain` mode you can

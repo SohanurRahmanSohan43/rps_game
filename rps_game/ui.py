@@ -28,6 +28,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import art, terminal
+from .chat import MAX_CHAT_CHARS
 from .engine import Match, Move, Outcome, Round, Score
 from .players import Seat, Side
 from .stats import Stats
@@ -135,6 +136,7 @@ class _View:
     prompt: Text = field(default_factory=_line)
     notice: Text = field(default_factory=_line)
     board: Optional[_Board] = None
+    chat: Optional[Text] = None            # one-line chat preview; None when there is no chat
 
 
 def _clock(seconds: float) -> str:
@@ -272,6 +274,8 @@ class GameUI:
         self._logo_text: Optional[str] = None
         self._board_text: Optional[str] = None
         self._wait_text = ""
+        self._chat = None                  # the opponent's chat port, online play only
+        self._chat_shown: Optional[str] = None
         self.you = Seat("You", Side.LEFT)
         self.opponent = Seat("Computer", Side.RIGHT)
 
@@ -358,7 +362,11 @@ class GameUI:
             desc = f" - {o.description}" if o.description else ""
             self._say(f"  {i}. {o.label}{tag}{desc}")
         while True:
-            raw = input(f"Choose 1-{len(options)}, or q to {back_label}: ").strip().lower()
+            self._plain_chat_flush()
+            typed = input(f"Choose 1-{len(options)}, or q to {back_label}: ")
+            if self._plain_chat_command(typed):
+                continue
+            raw = typed.strip().lower()
             if raw in BACK_WORDS:
                 return None
             if raw.isdigit() and 1 <= int(raw) <= len(options):
@@ -400,6 +408,8 @@ class GameUI:
                      idle=None) -> Optional[str]:
         updown = "Up/Down" if self.ascii_only else "\u2191/\u2193"
         hint = f"{updown} move   Enter select   Esc {back_label}"
+        if self._chat_active():
+            hint += "   / chat"
         index, notice = max(0, min(start, len(options) - 1)), ""
         terminal.flush_input()
         self._clear()
@@ -415,6 +425,13 @@ class GameUI:
                 )
                 key = terminal.read_key(timeout=0.3) if idle is not None else terminal.read_key()
                 if key is None:                     # nothing pressed: just refresh the status
+                    continue
+                if key == "/" and self._chat_active():
+                    live.stop()
+                    self._chat_screen()
+                    self._clear()
+                    live = Live(console=self.console, auto_refresh=False)
+                    live.start()
                     continue
                 notice = ""
                 select = key in (terminal.KEY_ENTER, terminal.KEY_RIGHT, " ")
@@ -623,6 +640,8 @@ class GameUI:
         who = f"{self.opponent.name}: {difficulty}" if difficulty else f"Opponent: {self.opponent.name}"
         self._say(f"Mode: {mode_text(best_of, rounds, first_to)}   {who}")
         self._say("Type r, p or s (or 1, 2, 3). Type q to quit.", "dim")
+        if self._chat_active():
+            self._say("Chat: type /message to send, / alone to read, /mute to hide.", "dim")
 
     # -- round lifecycle --------------------------------------------------
 
@@ -636,12 +655,154 @@ class GameUI:
             max_rounds=match.max_rounds,
         )
 
+    # -- chat ----------------------------------------------------------------
+
+    def set_chat(self, port) -> None:
+        """Attach the other player's chat (online play), or detach it with None."""
+        self._chat = port
+
+    def _chat_active(self) -> bool:
+        return self._chat is not None and bool(getattr(self._chat, "chat_enabled", False))
+
+    def _ellipsize(self, text: str, width: int) -> str:
+        if cell_len(text) <= width:
+            return text
+        dots = "..." if self.ascii_only else "\u2026"
+        return set_cell_size(text, max(1, width - len(dots))).rstrip() + dots
+
+    def _chat_text(self, *, menu: bool = False, used: int = 0) -> Text:
+        """The one-line chat preview: newest message, unread count and the key to open chat."""
+        port = self._chat
+        if port.chat_muted:
+            return _line(f"Chat from {port.name} is muted" + ("" if menu else "   m unmute"), "dim")
+        latest, unread = port.chat_preview(), port.chat_unread()
+        if not latest:
+            return _line("Press / to chat" + ("" if menu else "   m mute"), "dim")
+        room = max(10, self.console.width - 28 - used)
+        suffix = f"  ({unread} new)" if unread else ""
+        return _line(f"{port.name}: {self._ellipsize(latest, room)}{suffix}   / chat",
+                     "bold cyan" if unread else "dim")
+
+    def _toggle_mute(self) -> None:
+        self._chat.set_chat_muted(not self._chat.chat_muted)
+
+    def _open_chat(self) -> None:
+        """Show the chat screen over the round screen, then put the round screen back."""
+        was_live = self._live is not None
+        self.end_round()
+        self._chat_screen()
+        if was_live:
+            self._clear()
+            self._live = Live(console=self.console, auto_refresh=False)
+            self._live.start()
+            self._draw()
+
+    def _chat_screen(self) -> None:
+        """Full-screen chat. Enter sends; ``/`` on an empty line (or Esc) goes back.
+        A slash after the first character is just a slash. New messages appear live."""
+        port = self._chat
+        text, notice = "", ""
+        terminal.flush_input()
+        self._clear()
+        live = Live(console=self.console, auto_refresh=False)
+        live.start()
+        try:
+            while True:
+                port.chat_mark_read()
+                live.update(self._chat_view(text, notice), refresh=True)
+                key = terminal.read_key(timeout=0.25)
+                if key is None:
+                    continue
+                notice = ""
+                if key == terminal.KEY_ESC or (key == "/" and not text.strip()):
+                    return                                    # "/" on an empty (or all-spaces) line
+                if key == terminal.KEY_ENTER:
+                    if text.strip():
+                        error = port.send_chat(text)
+                        if error:
+                            notice = error
+                        else:
+                            text = ""
+                elif key == terminal.KEY_BACKSPACE:
+                    text = text[:-1]
+                elif key == "\x15":                              # Ctrl-U clears the line
+                    text = ""
+                elif len(key) == 1 and (key.isprintable() or key in "\u200c\u200d"):
+                    if len(text) >= MAX_CHAT_CHARS:
+                        notice = f"That is the maximum length ({MAX_CHAT_CHARS})."
+                    else:
+                        text += key
+        finally:
+            live.stop()
+
+    def _chat_view(self, text: str, notice: str) -> Group:
+        port = self._chat
+        title = f"Chat with {port.name}" + ("  (muted)" if port.chat_muted else "")
+        budget = max(3, self.console.height - 9)
+        shown: list[Text] = []
+        used = 0
+        for line in reversed(port.chat_lines(60)):             # newest first, until the screen is full
+            if line.sender == "me":
+                row = Text.assemble(("You", "bold cyan"), ": ", line.text)
+            elif line.sender == "them":
+                row = Text.assemble((port.name, "bold magenta"), ": ", line.text)
+            else:
+                row = Text(line.text, style="dim italic")
+            height = len(self.console.render_lines(row, pad=False))
+            if used + height > budget:
+                break
+            shown.append(row)
+            used += height
+        shown.reverse()
+        history: list[RenderableType] = [_line()] * (budget - used) + shown
+        if not notice and getattr(port, "error", None) is not None:
+            notice = f"{port.name} has left the game."
+        parts: list[RenderableType] = [
+            _line(title, "bold"), _line(), *history, _line(),
+            Text("> " + text + "_", style="bold cyan"),
+            _line(notice, "yellow"),
+            _line("Enter send   / or Esc back   (messages are never saved)", "dim"),
+        ]
+        return self._vcenter(parts)
+
+    # -- chat in plain mode: "/message" sends, "/" reads, "/mute" hides ---------
+
+    def _plain_chat_flush(self) -> None:
+        """Print anything new the other player has written."""
+        if self._chat_active():
+            for line in self._chat.chat_take_unread():
+                self._say(f"{self._chat.name}: {line.text}", "cyan")
+
+    def _plain_chat_command(self, raw: str) -> bool:
+        """Handle a line starting with "/". Returns True if it was a chat command."""
+        raw = raw.strip()
+        if not raw.startswith("/") or not self._chat_active():
+            return False
+        body, port = raw[1:].strip(), self._chat
+        if not body:
+            lines = port.chat_lines(10)
+            if not lines:
+                self._say("No chat messages yet. Type /message to send one.", "dim")
+            for line in lines:
+                who = "You" if line.sender == "me" else port.name
+                self._say(line.text if line.sender == "note" else f"{who}: {line.text}")
+            port.chat_mark_read()
+        elif body.lower() in ("mute", "unmute"):
+            port.set_chat_muted(body.lower() == "mute")
+            self._say("Chat muted." if body.lower() == "mute" else "Chat unmuted.", "dim")
+        else:
+            error = port.send_chat(body)
+            if error:
+                self._say(error, "yellow")
+        return True
+
     def start_round(self, match: Match, session: Score, difficulty: str, *,
                     note: str = "") -> None:
         """Begin a round: in rich mode, wipe the screen and draw it fresh."""
         number = len(match.rounds) + 1
         of = f" of {match.max_rounds}" if match.max_rounds else ""
         self._wait_text = ""                           # a new round may need the same waiting text again
+        self._chat_shown = None
         if self.plain:
             self._say()
             self._say(f"Round {number}{of}", "bold")
@@ -655,8 +816,9 @@ class GameUI:
                 *([note] if note else []),
             ]),
             caption=_line("Your move!", "dim"),
-            prompt=self._choices_prompt(),
+            prompt=self._choices_prompt(chat=self._chat_active()),
             board=self._board,
+            chat=self._chat_text() if self._chat_active() else None,
         )
         self._clear()
         self._live = Live(console=self.console, auto_refresh=False)
@@ -667,16 +829,30 @@ class GameUI:
         """Called repeatedly while waiting on the other player.
         Returns False if the player chose to leave (after confirming)."""
         if self._live is None:                       # plain mode: say each new thing once
+            self._plain_chat_flush()
             if text != self._wait_text:
                 self._wait_text = text
                 self._say(text, "dim")
             return True
+        chat = self._chat_active()
         if text != self._wait_text:
             self._wait_text = text
+            hint = "Press q to leave (you forfeit the game)"
             self._draw(prompt=_line(text, "bold"),
-                       notice=_line("Press q to leave (you forfeit the game)", "dim"))
+                       notice=_line(("/ chat   " if chat else "") + hint, "dim"))
+        if chat:
+            line = self._chat_text()
+            if line.plain != self._chat_shown:
+                self._chat_shown = line.plain
+                self._draw(chat=line)
         key = terminal.read_key(timeout=0) if self._interactive() else None
-        if key and (key.lower() == "q" or key == terminal.KEY_ESC):
+        if key == "/" and chat:
+            self._open_chat()
+            self._wait_text, self._chat_shown = "", None     # the screen was rebuilt: draw it all again
+        elif key and key.lower() == "m" and chat:
+            self._toggle_mute()
+            self._chat_shown = None
+        elif key and (key.lower() == "q" or key == terminal.KEY_ESC):
             if not leave_prompt or self._confirm_leave(leave_prompt):
                 return False
             self._wait_text = ""                     # screen was rebuilt: draw the text again
@@ -702,7 +878,10 @@ class GameUI:
 
     def _ask_line(self, leave_prompt: str = "") -> Optional[Move]:
         while True:
+            self._plain_chat_flush()
             raw = input("Your move (rock, paper, scissors, or quit): ")
+            if self._plain_chat_command(raw):
+                continue
             if raw.strip().lower() in QUIT_WORDS:
                 if leave_prompt and not self.confirm(leave_prompt):
                     continue
@@ -716,13 +895,14 @@ class GameUI:
             )
 
     @staticmethod
-    def _choices_prompt() -> Text:
+    def _choices_prompt(chat: bool = False) -> Text:
         return Text.assemble(
             "Choose: ",
             "[", ("r", "bold"), "]ock   ",
             "[", ("p", "bold"), "]aper   ",
             "[", ("s", "bold"), "]cissors   ",
             "[", ("q", "bold"), "]uit",
+            *(["   [", ("/", "bold"), "] chat"] if chat else []),
             justify="center",
         )
 
@@ -747,11 +927,24 @@ class GameUI:
                 if status != last:
                     last = status
                     self._draw(notice=_line(status, "dim"))
+                if self._chat_active():
+                    line = self._chat_text()
+                    if line.plain != self._chat_shown:
+                        self._chat_shown = line.plain
+                        self._draw(chat=line)
                 key = terminal.read_key(timeout=0.25)
                 if key is None:
                     continue
             else:
                 key = terminal.read_key()
+            if key == "/" and self._chat_active():
+                self._open_chat()
+                last, self._chat_shown = None, None   # the round screen was rebuilt
+                continue
+            if key.lower() == "m" and self._chat_active():
+                self._toggle_mute()
+                self._chat_shown = None
+                continue
             if key.lower() == "q":
                 if leave_prompt and not self._confirm_leave(leave_prompt):
                     last = None
@@ -792,6 +985,8 @@ class GameUI:
             parts += self._scoreboard_heading(SCOREBOARD_BIG_MIN_ROWS)
             parts.append(Align.center(self._board_table(v.board)))
         parts += [_line(), v.prompt, v.notice]
+        if v.chat is not None:
+            parts.append(v.chat)
         return self._vcenter(parts)
 
     def _arena(self, v: _View) -> list[RenderableType]:
@@ -1001,6 +1196,13 @@ class GameUI:
         """Game over: the result and scoreboard with a menu underneath."""
         self.end_round()
         rich, plain = self._results_header(session, None, None, finished)
+        if self._chat_active():
+            base = idle
+
+            def idle() -> str:                       # noqa: F811 - wraps the caller's status
+                status = base() if base is not None else ""
+                chat = self._chat_text(menu=True, used=len(status)).plain
+                return "   ".join(part for part in (status, chat) if part)
         return self.choose(title, options, back_label=back_label, header=rich,
                            plain_header=plain, idle=idle)
 

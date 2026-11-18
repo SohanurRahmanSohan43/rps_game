@@ -294,7 +294,7 @@ def test_rich_joiner_name_and_accept_prompts_take_over_the_screen_and_return(mon
 
 def test_incompatible_versions_tell_the_player_what_to_do(capsys):
     box = MemoryMailbox()
-    box.tamper = lambda role, data: data.replace(b'"v":1', b'"v":9')
+    box.tamper = lambda role, data: data.replace(b'"v":2', b'"v":9')
     ht, _ = start(raw_host(box))
     assert connect_dual(plain_ui(), join_setup(), mailbox="x", factory=box.transport,
                         session_options=FAST_JOIN) is None

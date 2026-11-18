@@ -24,6 +24,8 @@ class Settings:
     show_stats_after_game: bool = False
     # Which side of your own screen your hand appears on in Dual Player.
     preferred_side: str = "left"
+    # Chat in online games: when off, you neither send nor see messages.
+    chat_enabled: bool = True
 
     @classmethod
     def from_dict(cls, data: object) -> "Settings":
@@ -31,9 +33,11 @@ class Settings:
             return cls()
         flag = data.get("show_stats_after_game")
         side = data.get("preferred_side")
+        chat = data.get("chat_enabled")
         return cls(
             show_stats_after_game=flag if isinstance(flag, bool) else False,
             preferred_side=side if side in ("left", "right") else "left",
+            chat_enabled=chat if isinstance(chat, bool) else True,
         )
 
 

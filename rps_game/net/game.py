@@ -25,8 +25,12 @@ from __future__ import annotations
 import hmac
 import threading
 import time
+from dataclasses import dataclass
 from typing import Callable, Optional
 
+from ..chat import (FLOOD_DROPS_BEFORE_MUTE, FLOOD_WINDOW_SECONDS, RECV_BURST,
+                    RECV_REFILL_PER_SECOND, SEND_BURST, SEND_REFILL_PER_SECOND, TokenBucket,
+                    check_chat)
 from ..engine import Move, Round
 from . import fairness
 from . import protocol as proto
@@ -39,6 +43,13 @@ from .session import Connection
 # Called every fraction of a second while waiting; return False to stop waiting.
 WaitHook = Callable[[str], bool]
 RECV_SLICE = 0.25
+CHAT_HISTORY = 200          # messages kept in memory per match; never written to disk
+
+
+@dataclass(frozen=True)
+class ChatLine:
+    sender: str             # "me", "them", or "note" (a notice such as "chat was muted")
+    text: str
 
 
 class NetworkOpponent:
@@ -52,9 +63,11 @@ class NetworkOpponent:
         ping_interval: float = PING_INTERVAL,
         first_ping_delay: float = 0.5,
         liveness_timeout: float = LIVENESS_TIMEOUT,
+        chat_enabled: bool = True,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.name = connection.opponent_name
+        self.chat_enabled = chat_enabled
         self.opponent_id = connection.opponent_id
         self.on_wait: Optional[WaitHook] = None
         self.rtt_ms: Optional[float] = None
@@ -86,6 +99,15 @@ class NetworkOpponent:
         self._ping_n = 0
         self._rematch_sent = self._rematch_recv = False
         self._generation = 0                               # bumps whenever a rematch starts
+        self._revealed: set[int] = set()                   # rounds whose reveal we already sent
+
+        self._chat: list[ChatLine] = []
+        self._unread = 0
+        self._muted = False
+        self._send_bucket = TokenBucket(SEND_BURST, SEND_REFILL_PER_SECOND, clock)
+        self._recv_bucket = TokenBucket(RECV_BURST, RECV_REFILL_PER_SECOND, clock)
+        self._drops: list[float] = []
+        self._last_chat_at: Optional[float] = None         # proof the other player is present
 
         self._thread = threading.Thread(target=self._run, name="rps-net", daemon=True)
         self._thread.start()
@@ -133,6 +155,7 @@ class NetworkOpponent:
         if isinstance(message, proto.Ping):
             self._send(proto.Pong(message.n))
             return
+        outgoing: list[proto.Message] = []
         with self._cv:
             if isinstance(message, proto.Pong):
                 sent = self._pings.pop(message.n, None)
@@ -143,14 +166,21 @@ class NetworkOpponent:
                 raise PeerLeft(self.name)
             if isinstance(message, proto.Commit):
                 self._on_commit(message)
+                reveal = self._reveal_if_ready(message.round)
+                if reveal is not None:
+                    outgoing.append(reveal)
             elif isinstance(message, proto.Reveal):
                 self._on_reveal(message)
             elif isinstance(message, proto.Rematch):
                 self._rematch_recv = True
                 self._maybe_restart()
+            elif isinstance(message, proto.Chat):
+                self._on_chat(message)
             else:
                 raise ProtocolError("unexpected message during the game")
             self._cv.notify_all()
+        for reply in outgoing:                             # never send while holding the lock
+            self._send(reply)
 
     # -- protocol rules (called with the lock held) --------------------------------
 
@@ -179,6 +209,41 @@ class NetworkOpponent:
             raise CheatDetected(self.name)
         self._their_reveal[r] = move
 
+    def _reveal_if_ready(self, r: int) -> Optional[proto.Reveal]:
+        """The reveal to send for round ``r``, if both commitments are in (lock held).
+
+        This runs on whichever thread completes the pair, so our reveal goes out the
+        instant it is allowed, whatever the screen is doing: a prompt, a chat window or
+        a slow redraw can never make the other player time out waiting for it.
+        """
+        if r != self._round or r in self._revealed:
+            return None
+        if self._sent_commit_round != r or r not in self._their_commit or r not in self._my_secret:
+            return None
+        if self._their_commit[r][1] != self._state:
+            raise ProtocolError("the two games disagree about earlier rounds")
+        move, nonce = self._my_secret[r]
+        self._revealed.add(r)
+        return proto.Reveal(r, move.value, nonce)
+
+    def _on_chat(self, msg: proto.Chat) -> None:
+        if not self.chat_enabled or self._muted:
+            return                                         # chat is off or muted: ignore quietly
+        now = self._clock()
+        if not self._recv_bucket.allow():                  # an honest client never gets here
+            self._drops = [t for t in self._drops if now - t < FLOOD_WINDOW_SECONDS] + [now]
+            if len(self._drops) >= FLOOD_DROPS_BEFORE_MUTE:
+                self._muted = True
+                self._add_chat("note", f"Chat from {self.name} was muted: too many messages.")
+            return
+        self._add_chat("them", msg.text)
+        self._unread += 1
+        self._last_chat_at = now
+
+    def _add_chat(self, sender: str, text: str) -> None:
+        self._chat.append(ChatLine(sender, text))
+        del self._chat[:-CHAT_HISTORY]
+
     def _maybe_restart(self) -> None:
         """A rematch starts once *both* sides have asked for one (lock held)."""
         if self._rematch_sent and self._rematch_recv:
@@ -187,6 +252,7 @@ class NetworkOpponent:
             self._my_secret.clear()
             self._their_commit.clear()
             self._their_reveal.clear()
+            self._revealed.clear()
             self._sent_commit_round = 0
             self._rematch_sent = self._rematch_recv = False
             self._generation += 1
@@ -204,14 +270,21 @@ class NetworkOpponent:
 
     # ================================================================ waiting
 
-    def _wait(self, done: Callable[[], bool], timeout: float, what: str, text: str) -> None:
-        deadline = self._clock() + timeout
+    def _wait(self, done: Callable[[], bool], timeout: float, what: str, text: str,
+              extend_on_chat: bool = False) -> None:
+        """Wait until ``done()``. With ``extend_on_chat`` each chat message from the other
+        player restarts the clock (they are clearly there), but never beyond 3x the limit."""
+        start = self._clock()
+        hard_cap = start + timeout * 3
         while True:
             with self._cv:
                 if done():
                     return
                 if self._error is not None:
                     raise self._error
+                deadline = start + timeout
+                if extend_on_chat and self._last_chat_at is not None:
+                    deadline = min(hard_cap, max(deadline, self._last_chat_at + timeout))
                 if self._clock() >= deadline:
                     raise Timeout(what)
                 self._cv.wait(0.2)
@@ -229,23 +302,28 @@ class NetworkOpponent:
     # ================================================================ Opponent interface
 
     def play(self, own: Move) -> Move:
-        """One round: commit, wait for their commitment, reveal, verify theirs."""
+        """One round: commit, then (automatically) reveal once both have committed,
+        and return the other player's verified move."""
         self._check()
         nonce = fairness.new_nonce()
         with self._cv:
-            r, prev = self._round, self._state
+            r = self._round
             self._my_secret[r] = (own, nonce)
             self._sent_commit_round = r                    # set *before* sending: no reveal can precede it
-        self._send(proto.Commit(r, fairness.commitment(r, self._role, own, nonce), prev))
+            state = self._state
+        self._send(proto.Commit(r, fairness.commitment(r, self._role, own, nonce), state))
+        try:
+            with self._cv:
+                reveal = self._reveal_if_ready(r)          # they may have committed already
+        except ProtocolError as exc:
+            self._fail(exc)
+            raise
+        if reveal is not None:
+            self._send(reveal)
 
         self._wait(lambda: r in self._their_commit, self._commit_timeout,
-                   f"{self.name} to lock in", f"Waiting for {self.name} to lock in...")
-        with self._cv:
-            _, their_state = self._their_commit[r]
-        if their_state != prev:
-            raise ProtocolError("the two games disagree about earlier rounds")
-
-        self._send(proto.Reveal(r, own.value, nonce))
+                   f"{self.name} to lock in", f"Waiting for {self.name} to lock in...",
+                   extend_on_chat=True)
         self._wait(lambda: r in self._their_reveal, self._reveal_timeout,
                    f"{self.name} to reveal", f"Revealing with {self.name}...")
         with self._cv:
@@ -261,6 +339,7 @@ class NetworkOpponent:
             self._their_commit.pop(r, None)
             self._their_reveal.pop(r, None)
             self._my_secret.pop(r, None)
+            self._revealed.discard(r)
             self._round = r + 1
             self._cv.notify_all()
 
@@ -297,6 +376,66 @@ class NetworkOpponent:
     def round(self) -> int:
         with self._cv:
             return self._round
+
+    # ================================================================ chat (for the screens)
+
+    def send_chat(self, raw: str) -> Optional[str]:
+        """Send a message. Returns a sentence for the player if it was not sent, else None."""
+        if not self.chat_enabled:
+            return "Chat is turned off."
+        checked = check_chat(raw)
+        if not checked.ok:
+            return checked.error
+        with self._cv:
+            if self._error is not None:
+                return f"{self.name} has left."
+            if not self._send_bucket.allow():
+                return "You're sending messages too quickly. Wait a moment."
+        try:
+            self._send(proto.Chat(checked.text))
+        except NetError:
+            return f"{self.name} has left."
+        with self._cv:
+            self._add_chat("me", checked.text)
+        return None
+
+    def chat_lines(self, limit: int = 50) -> list[ChatLine]:
+        with self._cv:
+            return list(self._chat[-limit:])
+
+    def chat_unread(self) -> int:
+        with self._cv:
+            return self._unread
+
+    def chat_take_unread(self) -> list[ChatLine]:
+        """The unread messages from the other player, oldest first; marks them read."""
+        with self._cv:
+            count, self._unread = self._unread, 0
+            theirs = [line for line in self._chat if line.sender == "them"]
+            return theirs[-count:] if count else []
+
+    def chat_mark_read(self) -> None:
+        with self._cv:
+            self._unread = 0
+
+    @property
+    def chat_muted(self) -> bool:
+        with self._cv:
+            return self._muted
+
+    def set_chat_muted(self, muted: bool) -> None:
+        with self._cv:
+            self._muted = muted
+            if muted:
+                self._unread = 0
+
+    def chat_preview(self) -> str:
+        """The latest message from the other player, for a one-line preview ("" if none)."""
+        with self._cv:
+            for line in reversed(self._chat):
+                if line.sender == "them":
+                    return line.text
+        return ""
 
     # ================================================================ rematch / leaving
 

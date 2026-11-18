@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+from rps_game.net.config import PROTOCOL_VERSION
+
 from netutil import connected_pair, recv, send
 from rps_game.engine import MOVES, Move, Round, judge
 from rps_game.net import fairness
@@ -235,7 +237,7 @@ def test_a_reveal_before_we_have_locked_in_is_refused(make):
     ("reveal without commit", lambda c, n: [proto.Reveal(1, "rock", n)]),
     ("reveal for another round", lambda c, n: [c, proto.Reveal(2, "rock", n)]),
     ("commit for the next round too early", lambda c, n: [c, proto.Commit(2, c.digest, c.state)]),
-    ("a hello mid-game", lambda c, n: [proto.Hello(1, "Mallory", "c" * 32, "9.9")]),
+    ("a hello mid-game", lambda c, n: [proto.Hello(PROTOCOL_VERSION, "Mallory", "c" * 32, "9.9")]),
     ("a start mid-game", lambda c, n: [proto.Start()]),
     ("settings mid-game", lambda c, n: [proto.Settings(3, None)]),
 ])
@@ -413,8 +415,9 @@ def test_no_sequence_of_hostile_messages_crashes_or_hangs_us(make):
         proto.Commit(1, "0" * 64, fairness.INITIAL_STATE),
         proto.Reveal(1, "rock", nonce), proto.Reveal(1, "paper", nonce), proto.Reveal(2, "rock", nonce),
         proto.Rematch(), proto.Ping(1), proto.Pong(1), proto.Pong(99),
-        proto.Hello(1, "Mallory", "c" * 32, "1.0"), proto.Start(), proto.Accept(),
+        proto.Hello(PROTOCOL_VERSION, "Mallory", "c" * 32, "1.0"), proto.Start(), proto.Accept(),
         proto.Settings(3, None), proto.Bye("quit"), proto.RejectName("taken"),
+        proto.Chat("hello"), proto.Chat("x"), proto.Chat("সোহান 😀"),
     ]
 
     @hypothesis.settings(max_examples=60, deadline=None,

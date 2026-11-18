@@ -20,7 +20,7 @@ MAX_ROUNDS = 99
 
 MAIN = [
     Option("Start Game", "start", "Pick a mode and play"),
-    Option("Stats", "stats", "Your results and preferences"),
+    Option("Stats & settings", "stats", "Your results and preferences"),
     Option("Exit", "exit", "Quit RPS"),
 ]
 MODES = [
@@ -50,20 +50,23 @@ class GameConfig:
 
 
 def stats_menu(ui: GameUI) -> None:
-    """Statistics and the preference for showing them after each game."""
+    """Statistics, plus the preferences that go with them."""
     index = 0
     while True:
         prefs = settings_store.load()
         state = "On" if prefs.show_stats_after_game else "Off"
+        chat_state = "On" if prefs.chat_enabled else "Off"
         options = [
             Option("Your statistics", "view", "Lifetime results against the computer"),
             Option("Head-to-head", "h2h", "Results against other players", enabled=False,
                    tag="coming soon"),
             Option(f"Show stats after each game: {state}", "toggle",
                    "Also show your all-time totals on the results screen"),
+            Option(f"Chat in online games: {chat_state}", "chat",
+                   "Turn off to neither send nor see chat messages"),
             Option("Reset statistics", "reset", "Delete all saved results"),
         ]
-        pick = ui.choose("Statistics", options, crumbs="Main menu", start=index)
+        pick = ui.choose("Stats & settings", options, crumbs="Main menu", start=index)
         if pick is None:
             return
         index = next(i for i, o in enumerate(options) if o.value == pick)
@@ -72,7 +75,11 @@ def stats_menu(ui: GameUI) -> None:
         elif pick == "toggle":
             prefs.show_stats_after_game = not prefs.show_stats_after_game
             settings_store.save(prefs)
-        elif pick == "reset" and ui.confirm("Delete all saved statistics?", crumbs="Statistics"):
+        elif pick == "chat":
+            prefs.chat_enabled = not prefs.chat_enabled
+            settings_store.save(prefs)
+        elif pick == "reset" and ui.confirm("Delete all saved statistics?",
+                                            crumbs="Stats & settings"):
             stats_store.reset()
 
 

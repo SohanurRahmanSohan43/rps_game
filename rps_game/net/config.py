@@ -10,7 +10,7 @@ DEFAULT_MAILBOX = "ws://relay.magic-wormhole.io:4000/v1"
 
 # Namespaces our rooms away from other Wormhole apps; the suffix is the wire version.
 APPID = "github.com/SohanurRahmanSohan43/rps_game/dual/v1"
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2          # 2 added chat; games on other versions refuse politely
 
 MAX_MESSAGE_BYTES = 4096        # nothing legitimate is anywhere near this
 MAX_WRONG_PASSKEYS = 3          # live guesses before the host burns the room

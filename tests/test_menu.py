@@ -237,10 +237,11 @@ def test_stats_menu_view_shows_lifetime_screen(monkeypatch):
 def test_stats_menu_reset_needs_confirmation(monkeypatch):
     stats.save(stats.Stats(wins=3))
     ui, _ = _rich_ui()
-    _keys(monkeypatch, [K.KEY_DOWN, K.KEY_DOWN, K.KEY_DOWN, K.KEY_ENTER, "n", K.KEY_ESC])
+    four = [K.KEY_DOWN] * 4                                      # Reset is the fifth entry
+    _keys(monkeypatch, [*four, K.KEY_ENTER, "n", K.KEY_ESC])
     menu.stats_menu(ui)
     assert stats.load().wins == 3                                # declined
-    _keys(monkeypatch, [K.KEY_DOWN, K.KEY_DOWN, K.KEY_DOWN, K.KEY_ENTER, "y", K.KEY_ESC])
+    _keys(monkeypatch, [*four, K.KEY_ENTER, "y", K.KEY_ESC])
     menu.stats_menu(ui)
     assert stats.load().wins == 0
 
@@ -269,3 +270,25 @@ def test_confirm_plain(monkeypatch):
     assert ui.confirm("Sure?") is True
     _feed(monkeypatch, [""])
     assert ui.confirm("Sure?") is False
+
+
+def test_the_chat_setting_can_be_toggled_from_stats_and_settings(monkeypatch):
+    from rps_game import settings
+
+    ui, out = _rich_ui()
+    assert settings.load().chat_enabled is True
+    four = [K.KEY_DOWN] * 3                                      # the chat toggle is the fourth entry
+    _keys(monkeypatch, [*four, K.KEY_ENTER, K.KEY_ESC])
+    menu.stats_menu(ui)
+    assert settings.load().chat_enabled is False
+    assert "Chat in online games: Off" in out.getvalue()
+    _keys(monkeypatch, [*four, K.KEY_ENTER, K.KEY_ESC])
+    menu.stats_menu(ui)
+    assert settings.load().chat_enabled is True
+
+
+def test_the_main_menu_entry_is_called_stats_and_settings(monkeypatch):
+    ui, out = _rich_ui()
+    _keys(monkeypatch, [K.KEY_DOWN, K.KEY_DOWN, K.KEY_ENTER])    # Exit
+    menu.select_game(ui)
+    assert "Stats & settings" in out.getvalue()

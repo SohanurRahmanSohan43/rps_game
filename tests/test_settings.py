@@ -41,3 +41,17 @@ def test_unknown_side_values_fall_back_to_left(tmp_path):
     for junk in ('{"preferred_side": "middle"}', '{"preferred_side": 3}', '{"preferred_side": null}'):
         p.write_text(junk)
         assert settings.load(p).preferred_side == "left"
+
+
+def test_chat_is_on_by_default_and_round_trips(tmp_path):
+    assert settings.load(tmp_path / "none.json").chat_enabled is True
+    p = tmp_path / "s.json"
+    settings.save(settings.Settings(chat_enabled=False), p)
+    assert settings.load(p).chat_enabled is False
+
+
+def test_junk_chat_values_fall_back_to_on(tmp_path):
+    p = tmp_path / "s.json"
+    for junk in ('{"chat_enabled": "no"}', '{"chat_enabled": 0}', '{"chat_enabled": null}', "[]"):
+        p.write_text(junk)
+        assert settings.load(p).chat_enabled is True

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from .. import settings as settings_store
 from ..dualsetup import DualSetup
 from ..menu import GameConfig
 from ..players import Seat, Side
@@ -33,7 +34,9 @@ def play_dual(ui: GameUI, setup: DualSetup, connection: Connection, *,
     Returns True if the player pressed Ctrl-C (or input closed), meaning "quit the
     whole program"; False for an ordinary return to the menu. ``options`` (timeouts)
     go to the NetworkOpponent; tests use them to stay fast."""
-    opponent = NetworkOpponent(connection, **options)
+    chat_on = options.pop("chat_enabled", settings_store.load().chat_enabled)
+    opponent = NetworkOpponent(connection, chat_enabled=chat_on, **options)
+    ui.set_chat(opponent if chat_on else None)
     ui.set_players(Seat(setup.name, setup.side), Seat(connection.opponent_name, setup.side.other))
     terms = connection.terms
     config = GameConfig(difficulty="", rounds=terms.rounds, first_to=terms.first_to, one_game=True)
@@ -55,6 +58,7 @@ def play_dual(ui: GameUI, setup: DualSetup, connection: Connection, *,
             if not _rematch(ui, opponent):
                 return False
     finally:
+        ui.set_chat(None)
         opponent.close("quit")
         ui.set_players(Seat("You", Side.LEFT), Seat("Computer", Side.RIGHT))   # back to single-player
 
